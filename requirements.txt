@@ -9,4 +9,5 @@ botorch
 cython
 cvxpy
 pymoo
+shap
 bofire
