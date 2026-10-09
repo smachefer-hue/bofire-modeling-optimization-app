@@ -8,4 +8,5 @@ gpytorch
 botorch
 cython
 cvxpy
+pymoo
 bofire
