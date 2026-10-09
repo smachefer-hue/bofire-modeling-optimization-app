@@ -191,23 +191,26 @@ if 'model' in st.session_state:
             mean_val = (feat.bounds[0] + feat.bounds[1]) / 2.0
             fixed_sliders[key] = st.slider(f"Wert für {key}:", float(feat.bounds[0]), float(feat.bounds[1]), float(mean_val))
 
+       # Mathematische Berechnung der Oberflächengitter
     grid_size = 30
     x_feat = domain.inputs.get_by_key(x_axis)
+    y_feat = domain.inputs.get_by_key(y_axis)
+    x_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], grid_size)
+    y_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], grid_size)
+    X_mesh, Y_mesh = np.meshgrid(x_range, y_range)
+    
+    plot_df_list = []
+    for x_val in x_range:
+        for y_val in y_range:
+            row_data = {k: val for k, val in fixed_sliders.items()}
+            row_data[x_axis] = x_val
+            row_data[y_axis] = y_val
+            plot_df_list.append(row_data)
+            
+    plot_df = pd.DataFrame(plot_df_list)
+    predictions_grid = model.predict(plot_df)
+    Z_mesh = predictions_grid[f"{primary_output_key}_pred"].values.reshape(grid_size, grid_size).T
 
-y_feat = domain.inputs.get_by_key(y_axis)
-x_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], grid_size)
-y_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], grid_size)
-X_mesh, Y_mesh = np.meshgrid(x_range, y_range)
-plot_df_list = []
-for x_val in x_range:
-for y_val in y_range:
-row_data = {k: val for k, val in fixed_sliders.items()}
-row_data[x_axis] = x_val
-row_data[y_axis] = y_val
-plot_df_list.append(row_data)
-plot_df = pd.DataFrame(plot_df_list)
-predictions_grid = model.predict(plot_df)
-Z_mesh = predictions_grid[f"{primary_output_key}_pred"].values.reshape(grid_size, grid_size).T
 valid_x, valid_y, valid_z = [], [], []
 line_grid = 100
 x_line_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], line_grid)
