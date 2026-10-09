@@ -6,4 +6,6 @@ plotly
 torch
 gpytorch
 botorch
+cython
+cvxpy
 bofire
