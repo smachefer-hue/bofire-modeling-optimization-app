@@ -252,52 +252,62 @@ if 'model' in st.session_state:
     fig.update_layout(scene=dict(xaxis_title=x_axis, yaxis_title=y_axis, zaxis_title=primary_output_key), margin=dict(l=0, r=0, b=0, t=40))
     st.plotly_chart(fig, use_container_width=True)
 
-# Bayes'sche Optimierung
-st.subheader("🤖 Bayes'sche Optimierung (SPO-Strategie)")
-if st.button("Optimale nächste Experimente berechnen"):
-try:
-from bofire.data_models.strategies.api import SoboStrategy as SoboStrategyDataModel
-from bofire.data_models.acquisition_functions.api import qLogEI
-neue_inputs = []
-fixed_values_for_output = {}
-entfernte_features = []
-for key in input_keys:
-hist_min = float(data[key].min())
-hist_max = float(data[key].max())
-if abs(hist_max - hist_min) < 1e-6:
-fixed_values_for_output[key] = hist_min
-entfernte_features.append(key)
-else:
-feat = domain.inputs.get_by_key(key)
-feat.bounds = (hist_min, hist_max)
-neue_inputs.append(feat)
-neue_constraints = []
-for c in domain.constraints.get():
-if hasattr(c, 'features'):
-aktive_c_features = [f for f in c.features if f not in entfernte_features]
-entfernte_c_features = [f for f in c.features if f in entfernte_features]
-abzug = sum([fixed_values_for_output[f] for f in entfernte_c_features])
-if len(aktive_c_features) > 0:
-neue_constraints.append(LinearEqualityConstraint(features=aktive_c_features, coefficients=[1.0] * len(aktive_c_features), rhs=c.rhs - abzug))
-optimierungs_domain = Domain(inputs=Inputs(features=neue_inputs), outputs=domain.outputs, constraints=Constraints(constraints=neue_constraints))
-strategy_data_model = SoboStrategyDataModel(domain=optimierungs_domain, acquisition_function=qLogEI())
-strategy = strategies.map(strategy_data_model)
-strategy.num_restarts = 2
-strategy.raw_samples = 32
-strategy.tell(experiments=data)
-proposals = strategy.ask(candidate_count=3)
-for key, value in fixed_values_for_output.items():
-proposals[key] = value
-if len(gewaehlte_komponenten) > 1:
-proposals["Kontrollsumme_Gemisch"] = proposals[gewaehlte_komponenten].sum(axis=1)
-st.write("Generierte Vorschläge für die nächsten Experimente:")
-st.dataframe(proposals)
-csv_export = proposals.to_csv(sep=";", index=False).encode('utf-8')
-st.download_button(
-label="📥 Nächste Experimente als CSV herunterladen",
-data=csv_export,
-file_name="BoFire_Naechste_Experimente.csv",
-mime="text/csv"
-)
-except Exception as e:
-st.warning(f"Optimierungshinweis: {str(e)}")
+    # Bayes'sche Optimierung
+    st.subheader("🤖 Bayes'sche Optimierung (SPO-Strategie)")
+    if st.button("Optimale nächste Experimente berechnen"):
+        try:
+            from bofire.data_models.strategies.api import SoboStrategy as SoboStrategyDataModel
+            from bofire.data_models.acquisition_functions.api import qLogEI
+            
+            neue_inputs = []
+            fixed_values_for_output = {}
+            entfernte_features = []
+            
+            for key in input_keys:
+                hist_min = float(data[key].min())
+                hist_max = float(data[key].max())
+                if abs(hist_max - hist_min) < 1e-6:
+                    fixed_values_for_output[key] = hist_min
+                    entfernte_features.append(key)
+                else:
+                    feat = domain.inputs.get_by_key(key)
+                    feat.bounds = (hist_min, hist_max)
+                    neue_inputs.append(feat)
+                    
+            neue_constraints = []
+            for c in domain.constraints.get():
+                if hasattr(c, 'features'):
+                    aktive_c_features = [f for f in c.features if f not in entfernte_features]
+                    entfernte_c_features = [f for f in c.features if f in entfernte_features]
+                    abzug = sum([fixed_values_for_output[f] for f in entfernte_c_features])
+                    if len(aktive_c_features) > 0:
+                        neue_constraints.append(LinearEqualityConstraint(features=aktive_c_features, coefficients=[1.0] * len(aktive_c_features), rhs=c.rhs - abzug))
+                        
+            optimierungs_domain = Domain(inputs=Inputs(features=neue_inputs), outputs=domain.outputs, constraints=Constraints(constraints=neue_constraints))
+            
+            strategy_data_model = SoboStrategyDataModel(domain=optimierungs_domain, acquisition_function=qLogEI())
+            strategy = strategies.map(strategy_data_model)
+            strategy.num_restarts = 2
+            strategy.raw_samples = 32
+            strategy.tell(experiments=data)
+            
+            proposals = strategy.ask(candidate_count=3)
+            for key, value in fixed_values_for_output.items():
+                proposals[key] = value
+                
+            if len(gewaehlte_komponenten) > 1:
+                proposals["Kontrollsumme_Gemisch"] = proposals[gewaehlte_komponenten].sum(axis=1)
+                
+            st.write("**Generierte Vorschläge für die nächsten Experimente:**")
+            st.dataframe(proposals)
+            
+            csv_export = proposals.to_csv(sep=";", index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Nächste Experimente als CSV herunterladen",
+                data=csv_export,
+                file_name="BoFire_Naechste_Experimente.csv",
+                mime="text/csv"
+            )
+        except Exception as e:
+            st.warning(f"Optimierungshinweis: {str(e)}")
+
