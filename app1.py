@@ -211,31 +211,38 @@ if 'model' in st.session_state:
     predictions_grid = model.predict(plot_df)
     Z_mesh = predictions_grid[f"{primary_output_key}_pred"].values.reshape(grid_size, grid_size).T
 
-valid_x, valid_y, valid_z = [], [], []
-line_grid = 100
-x_line_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], line_grid)
-y_line_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], line_grid)
-for x_val in x_line_range:
-for y_val in y_line_range:
-current_mix = {k: fixed_sliders.get(k, 0.0) for k in gewaehlte_komponenten}
-if x_axis in gewaehlte_komponenten: current_mix[x_axis] = x_val
-if y_axis in gewaehlte_komponenten: current_mix[y_axis] = y_val
-if abs(sum(current_mix.values()) - ziel_summe) <= (0.01 * ziel_summe):
-row_data = {k: fixed_sliders.get(k, 0.0) for k in input_keys}
-row_data[x_axis] = x_val
-row_data[y_axis] = y_val
-valid_x.append(x_val)
-valid_y.append(y_val)
-if len(valid_x) > 0:
-line_df_list = []
-for i in range(len(valid_x)):
-row_data = {k: fixed_sliders.get(k, 0.0) for k in input_keys}
-row_data[x_axis] = valid_x[i]
-row_data[y_axis] = valid_y[i]
-line_df_list.append(row_data)
-line_df = pd.DataFrame(line_df_list)
-line_predictions = model.predict(line_df)
-valid_z = line_predictions[f"{primary_output_key}_pred"].values
+    # Zulässigen Pfad berechnen
+    valid_x, valid_y, valid_z = [], [], []
+    line_grid = 100
+    x_line_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], line_grid)
+    y_line_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], line_grid)
+    
+    line_df_list = []
+    for x_val in x_line_range:
+        for y_val in y_line_range:
+            current_mix = {k: fixed_sliders.get(k, 0.0) for k in gewaehlte_komponenten}
+            if x_axis in gewaehlte_komponenten: current_mix[x_axis] = x_val
+            if y_axis in gewaehlte_komponenten: current_mix[y_axis] = y_val
+            
+            if abs(sum(current_mix.values()) - ziel_summe) <= (0.01 * ziel_summe):
+                row_data = {k: fixed_sliders.get(k, 0.0) for k in input_keys}
+                row_data[x_axis] = x_val
+                row_data[y_axis] = y_val
+                line_df_list.append(row_data)
+                valid_x.append(x_val)
+                valid_y.append(y_val)
+                
+    if len(valid_x) > 0:
+        line_df_list = []
+        for i in range(len(valid_x)):
+            row_data = {k: fixed_sliders.get(k, 0.0) for k in input_keys}
+            row_data[x_axis] = valid_x[i]
+            row_data[y_axis] = valid_y[i]
+            line_df_list.append(row_data)
+        line_df = pd.DataFrame(line_df_list)
+        line_predictions = model.predict(line_df)
+        valid_z = line_predictions[f"{primary_output_key}_pred"].values
+
 fig = go.Figure()
 fig.add_trace(go.Surface(x=X_mesh, y=Y_mesh, z=Z_mesh, colorscale=farbskala, opacity=slider_opacity, showscale=True))
 if len(valid_z) > 0:
