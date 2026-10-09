@@ -243,12 +243,15 @@ if 'model' in st.session_state:
         line_predictions = model.predict(line_df)
         valid_z = line_predictions[f"{primary_output_key}_pred"].values
 
-fig = go.Figure()
-fig.add_trace(go.Surface(x=X_mesh, y=Y_mesh, z=Z_mesh, colorscale=farbskala, opacity=slider_opacity, showscale=True))
-if len(valid_z) > 0:
-fig.add_trace(go.Scatter3d(x=valid_x, y=valid_y, z=valid_z, mode='lines', line=dict(color='black', width=8), name='Erlaubter Pfad'))
-fig.update_layout(scene=dict(xaxis_title=x_axis, yaxis_title=y_axis, zaxis_title=primary_output_key), margin=dict(l=0, r=0, b=0, t=40))
-st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    fig.add_trace(go.Surface(x=X_mesh, y=Y_mesh, z=Z_mesh, colorscale=farbskala, opacity=slider_opacity, showscale=True))
+    
+    if len(valid_z) > 0:
+        fig.add_trace(go.Scatter3d(x=valid_x, y=valid_y, z=valid_z, mode='lines', line=dict(color='black', width=8), name='Erlaubter Pfad'))
+        
+    fig.update_layout(scene=dict(xaxis_title=x_axis, yaxis_title=y_axis, zaxis_title=primary_output_key), margin=dict(l=0, r=0, b=0, t=40))
+    st.plotly_chart(fig, use_container_width=True)
+
 # Bayes'sche Optimierung
 st.subheader("🤖 Bayes'sche Optimierung (SPO-Strategie)")
 if st.button("Optimale nächste Experimente berechnen"):
