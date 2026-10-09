@@ -1,0 +1,7 @@
+streamlit
+bofire
+scikit-learn
+seaborn
+matplotlib
+plotly
+torch
