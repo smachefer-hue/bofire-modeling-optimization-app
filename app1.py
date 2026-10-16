@@ -7,6 +7,7 @@ import seaborn as sns
 from copy import deepcopy
 import plotly.graph_objects as go
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import KFold
 
 # BoFire Core Imports
 from bofire.data_models.domain.api import Domain, Inputs, Outputs, Constraints
@@ -84,14 +85,15 @@ if uploaded_file is not None:
         # Konfiguration des Mischungs-Constraints
         st.subheader("🛠️ Konfiguration des Mischungs-Constraints & Modell-Auswahl")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             default_gemisch = [k for k in input_keys if "_" in k]
             gewaehlte_komponenten = st.multiselect("Mischungskomponenten auswählen:", options=input_keys, default=default_gemisch)
         with col2:
             ziel_summe = st.number_input("Ziel-Summe des Gemischs:", value=1.0, step=0.1)
-            
-        GEWAEHLTES_MODELL = st.selectbox("Wählen Sie den Metamodell-Typ:", options=["linear", "random_forest", "standard_gp", "saas_gp", "mixed_gp"])
+            GEWAEHLTES_MODELL = st.selectbox("Wählen Sie den Metamodell-Typ:", options=["linear", "random_forest", "standard_gp", "saas_gp", "mixed_gp"])
+        with col3:
+            n_splits = st.number_input("Anzahl Faltungen für Kreuzvalidierung (K-Fold):", min_value=2, max_value=20, value=5, step=1)
         
         if st.button("Modellierung & Analyse starten", key="start_pipeline"):
             # Domain-Erstellung
@@ -115,44 +117,96 @@ if uploaded_file is not None:
                 
             domain = Domain(inputs=Inputs(features=input_features), outputs=Outputs(features=output_features), constraints=Constraints(constraints=constraints_list))
             
-            # Modell-Mapping
-            if GEWAEHLTES_MODELL == "random_forest":
-                model_data_model = RandomForestSurrogate(inputs=domain.inputs, outputs=domain.outputs, n_estimators=100)
-            elif GEWAEHLTES_MODELL == "standard_gp":
-                model_data_model = SingleTaskGPSurrogate(inputs=domain.inputs, outputs=domain.outputs)
-            elif GEWAEHLTES_MODELL == "linear":
-                model_data_model = LinearSurrogate(inputs=domain.inputs, outputs=domain.outputs)
-            elif GEWAEHLTES_MODELL == "saas_gp":
-                model_data_model = EnsembleMapSaasSingleTaskGPSurrogate(inputs=domain.inputs, outputs=domain.outputs)
-            elif GEWAEHLTES_MODELL == "mixed_gp":
-                model_data_model = MixedSingleTaskGPSurrogate(inputs=domain.inputs, outputs=domain.outputs)
+            # Hilfsfunktion zur Instanziierung des gewählten Modells
+            def get_model_data_model(model_type, domain_obj):
+                if model_type == "random_forest":
+                    return RandomForestSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs, n_estimators=100)
+                elif model_type == "standard_gp":
+                    return SingleTaskGPSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs)
+                elif model_type == "linear":
+                    return LinearSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs)
+                elif model_type == "saas_gp":
+                    return EnsembleMapSaasSingleTaskGPSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs)
+                elif model_type == "mixed_gp":
+                    return MixedSingleTaskGPSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs)
+                return LinearSurrogate(inputs=domain_obj.inputs, outputs=domain_obj.outputs)
+
+            primary_output_key = output_keys[0]
+            
+            # --- START K-FOLD KREUZVALIDIERUNG & Q² BERECHNUNG ---
+            st.subheader(f"🔄 {n_splits}-Fold Kreuzvalidierung läuft...")
+            
+            kf = KFold(n_splits=int(n_splits), shuffle=True, random_state=42)
+            cv_predictions = np.zeros(len(data))
+            
+            progress_bar = st.progress(0.0)
+            
+            for fold, (train_idx, test_idx) in enumerate(kf.split(data)):
+                train_data = data.iloc[train_idx].reset_index(drop=True)
+                test_data = data.iloc[test_idx].reset_index(drop=True)
                 
+                # Lokales Modell für den aktuellen Fold erzeugen und trainieren
+                fold_data_model = get_model_data_model(GEWAEHLTES_MODELL, domain)
+                fold_model = surrogates.map(fold_data_model)
+                fold_model.fit(train_data)
+                
+                # Vorhersage für den Test-Split
+                fold_pred = fold_model.predict(test_data)
+                cv_predictions[test_idx] = fold_pred[f"{primary_output_key}_pred"].values
+                
+                progress_bar.progress((fold + 1) / n_splits)
+            
+            progress_bar.empty()
+            
+            # Berechnung des Prognosekoeffizienten Q²
+            actual_values = data[primary_output_key].values
+            mean_actual = np.mean(actual_values)
+            
+            ss_res = np.sum((actual_values - cv_predictions) ** 2)
+            ss_tot = np.sum((actual_values - mean_actual) ** 2)
+            q2_prognose = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+            rmse_cv = np.sqrt(mean_squared_error(actual_values, cv_predictions))
+            # --- ENDE KREUZVALIDIERUNG ---
+
+            # Vollständiges Modell auf allen Daten trainieren (für die Plots und BO)
+            model_data_model = get_model_data_model(GEWAEHLTES_MODELL, domain)
             model = surrogates.map(model_data_model)
             model.fit(data)
-            st.success(f"Modell ({GEWAEHLTES_MODELL.upper()}) erfolgreich trainiert!")
+            st.success(f"Modell ({GEWAEHLTES_MODELL.upper()}) erfolgreich trainiert und kreuzvalidiert!")
             
-            # Diagnose-Plot
+            # Diagnose-Plot (Ergänzt um CV-Daten)
             st.subheader("🎯 Modell-Diagnose: Predicted vs. Actual")
-            primary_output_key = output_keys[0]
-            train_actual = data[primary_output_key].values
             train_predicted = model.predict(data)[f"{primary_output_key}_pred"].values
-            r2_train = r2_score(train_actual, train_predicted)
-            rmse_test = np.sqrt(mean_squared_error(train_actual, train_predicted))
+            r2_train = r2_score(actual_values, train_predicted)
             
             fig_diag, ax_diag = plt.subplots(figsize=(7, 5))
-            ax_diag.scatter(train_actual, train_predicted, color='purple', alpha=0.7, edgecolors='k', s=40, label='Datenpunkte')
-            min_v = min(min(train_actual), min(train_predicted))
-            max_v = max(max(train_actual), max(train_predicted))
+            ax_diag.scatter(actual_values, train_predicted, color='purple', alpha=0.5, edgecolors='k', s=40, label='Trainingsdaten (Fit)')
+            ax_diag.scatter(actual_values, cv_predictions, color='orange', alpha=0.7, marker='x', s=40, label=f'Kreuzvalidierung (Test)')
+            
+            min_v = min(min(actual_values), min(train_predicted), min(cv_predictions))
+            max_v = max(max(actual_values), max(train_predicted), max(cv_predictions))
             ax_diag.plot([min_v, max_v], [min_v, max_v], color='red', linestyle='--', linewidth=2, label='Ideallinie ($y=x$)')
+            
             ax_diag.set_title(f'Predicted vs. Actual ({GEWAEHLTES_MODELL.upper()})')
             ax_diag.set_xlabel(f'Reale Messwerte ({primary_output_key})')
             ax_diag.set_ylabel('Modell-Vorhersage')
             
-            info_text = f"Modell: {GEWAEHLTES_MODELL.upper()}\nTrain-$R^2$: {r2_train:.3f}\nRMSE: ± {rmse_test:.3f}"
+            info_text = (
+                f"Modell: {GEWAEHLTES_MODELL.upper()}\n"
+                f"Train-$R^2$: {r2_train:.3f}\n"
+                f"Prognose-$Q^2$ (CV): {q2_prognose:.3f}\n"
+                f"RMSE (CV): ± {rmse_cv:.3f}"
+            )
             ax_diag.text(0.05, 0.95, info_text, transform=ax_diag.transAxes, fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.85, edgecolor='gray'))
             ax_diag.legend(loc='lower right')
             ax_diag.grid(True, linestyle=':', alpha=0.6)
             st.pyplot(fig_diag)
+            
+            # Metriken übersichtlich anzeigen
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Bestimmtheitsmaß ($R^2$ Train)", f"{r2_train:.3f}")
+            m2.metric("Prognosekoeffizient ($Q^2$ CV)", f"{q2_prognose:.3f}", delta=f"{q2_prognose - r2_train:.3f} vs Train", delta_color="inverse")
+            m3.metric("Wurzel der mittleren Fehlerquadratsumme (RMSE CV)", f"{rmse_cv:.3f}")
             
             # Speicher für die interaktive App bereitstellen
             st.session_state['domain'] = domain
@@ -191,7 +245,6 @@ if 'model' in st.session_state:
             mean_val = (feat.bounds[0] + feat.bounds[1]) / 2.0
             fixed_sliders[key] = st.slider(f"Wert für {key}:", float(feat.bounds[0]), float(feat.bounds[1]), float(mean_val))
 
-       # Mathematische Berechnung der Oberflächengitter
     grid_size = 30
     x_feat = domain.inputs.get_by_key(x_axis)
     y_feat = domain.inputs.get_by_key(y_axis)
@@ -210,25 +263,18 @@ if 'model' in st.session_state:
     plot_df = pd.DataFrame(plot_df_list)
     predictions_grid = model.predict(plot_df)
     Z_mesh = predictions_grid[f"{primary_output_key}_pred"].values.reshape(grid_size, grid_size).T
-
-    # Zulässigen Pfad berechnen
+    
     valid_x, valid_y, valid_z = [], [], []
     line_grid = 100
     x_line_range = np.linspace(x_feat.bounds[0], x_feat.bounds[1], line_grid)
-    y_line_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], line_grid)
+    y_line_range = np.linspace(y_feat.bounds[0], y_feat.bounds[1], grid_size)
     
-    line_df_list = []
     for x_val in x_line_range:
         for y_val in y_line_range:
             current_mix = {k: fixed_sliders.get(k, 0.0) for k in gewaehlte_komponenten}
             if x_axis in gewaehlte_komponenten: current_mix[x_axis] = x_val
             if y_axis in gewaehlte_komponenten: current_mix[y_axis] = y_val
-            
             if abs(sum(current_mix.values()) - ziel_summe) <= (0.01 * ziel_summe):
-                row_data = {k: fixed_sliders.get(k, 0.0) for k in input_keys}
-                row_data[x_axis] = x_val
-                row_data[y_axis] = y_val
-                line_df_list.append(row_data)
                 valid_x.append(x_val)
                 valid_y.append(y_val)
                 
@@ -242,7 +288,7 @@ if 'model' in st.session_state:
         line_df = pd.DataFrame(line_df_list)
         line_predictions = model.predict(line_df)
         valid_z = line_predictions[f"{primary_output_key}_pred"].values
-
+        
     fig = go.Figure()
     fig.add_trace(go.Surface(x=X_mesh, y=Y_mesh, z=Z_mesh, colorscale=farbskala, opacity=slider_opacity, showscale=True))
     
@@ -251,14 +297,13 @@ if 'model' in st.session_state:
         
     fig.update_layout(scene=dict(xaxis_title=x_axis, yaxis_title=y_axis, zaxis_title=primary_output_key), margin=dict(l=0, r=0, b=0, t=40))
     st.plotly_chart(fig, use_container_width=True)
-
+    
     # Bayes'sche Optimierung
     st.subheader("🤖 Bayes'sche Optimierung (SPO-Strategie)")
     if st.button("Optimale nächste Experimente berechnen"):
         try:
             from bofire.data_models.strategies.api import SoboStrategy as SoboStrategyDataModel
             from bofire.data_models.acquisition_functions.api import qLogEI
-            
             neue_inputs = []
             fixed_values_for_output = {}
             entfernte_features = []
@@ -284,23 +329,20 @@ if 'model' in st.session_state:
                         neue_constraints.append(LinearEqualityConstraint(features=aktive_c_features, coefficients=[1.0] * len(aktive_c_features), rhs=c.rhs - abzug))
                         
             optimierungs_domain = Domain(inputs=Inputs(features=neue_inputs), outputs=domain.outputs, constraints=Constraints(constraints=neue_constraints))
-            
             strategy_data_model = SoboStrategyDataModel(domain=optimierungs_domain, acquisition_function=qLogEI())
             strategy = strategies.map(strategy_data_model)
             strategy.num_restarts = 2
             strategy.raw_samples = 32
             strategy.tell(experiments=data)
-            
             proposals = strategy.ask(candidate_count=3)
+            
             for key, value in fixed_values_for_output.items():
                 proposals[key] = value
-                
             if len(gewaehlte_komponenten) > 1:
                 proposals["Kontrollsumme_Gemisch"] = proposals[gewaehlte_komponenten].sum(axis=1)
                 
-            st.write("**Generierte Vorschläge für die nächsten Experimente:**")
+            st.write("Generierte Vorschläge für die nächsten Experimente:")
             st.dataframe(proposals)
-            
             csv_export = proposals.to_csv(sep=";", index=False).encode('utf-8')
             st.download_button(
                 label="📥 Nächste Experimente als CSV herunterladen",
@@ -310,4 +352,3 @@ if 'model' in st.session_state:
             )
         except Exception as e:
             st.warning(f"Optimierungshinweis: {str(e)}")
-
